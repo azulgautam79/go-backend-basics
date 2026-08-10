@@ -1,0 +1,28 @@
+# Go build output
+/bin/
+/dist/
+/build/
+
+# Compiled binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test/coverage output
+*.test
+*.out
+coverage.out
+
+# Environment / secrets
+.env
+.env.*
+
+# IDE/editor files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,4 @@
+1. Initialize a go project
+    go mod init github.com/azulgautam79/ecommerce-basic = go.mod
+
+2. 
