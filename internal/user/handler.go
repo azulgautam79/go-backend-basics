@@ -3,16 +3,18 @@ package user
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
+	"time"
 )
 
 type Handler struct {
-	store *Store
+	store      *Store
+	jwtService *JWTService
 }
 
-func NewHandler(store *Store) *Handler {
+func NewHandler(store *Store, jwtService *JWTService) *Handler {
 	return &Handler{
-		store: store,
+		store:      store,
+		jwtService: jwtService,
 	}
 }
 
@@ -42,6 +44,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		Name:     req.Name,
 		Email:    req.Email,
 		Password: hashedPassword,
+		Role:     RoleCustomer,
 	}
 
 	user, err = h.store.Create(user)
@@ -86,16 +89,33 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := h.store.CreateSession(user.ID)
+	accessToken, err := h.jwtService.GenerateAccessToken(user)
 
 	if err != nil {
-		http.Error(w, "failed to create session", http.StatusInternalServerError)
+		http.Error(w, "failed to create access token", http.StatusInternalServerError)
 		return
 	}
 
+	refreshToken, err := h.store.CreateRefreshToken(user.ID, 7*24*time.Hour)
+
+	if err != nil {
+		http.Error(w, "failed to create refresh token", http.StatusInternalServerError)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    refreshToken.Token,
+		Path:     "/auth",
+		HttpOnly: true,
+		Secure:   false,
+		SameSite: http.SameSiteLaxMode,
+		Expires:  refreshToken.ExpiresAt,
+	})
+
 	response := map[string]any{
-		"token": token,
-		"user":  user,
+		"accessToken": accessToken,
+		"user":        user,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -103,35 +123,105 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 }
 
-// ! Me
-func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
-	authHeader := r.Header.Get("Authorization")
-
-	if authHeader == "" {
-		http.Error(w, "missing authorization header", http.StatusUnauthorized)
-		return
-	}
-
-	if !strings.HasPrefix(authHeader, "Bearer ") {
-		http.Error(w, "invalid authorization header", http.StatusUnauthorized)
-		return
-	}
-
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-
-	if token == "" {
-		http.Error(w, "invalid authorization token", http.StatusUnauthorized)
-		return
-	}
-
-	user, err := h.store.GetUserBySession(token)
+// ! Logout
+func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("refresh_token")
 
 	if err != nil {
-		http.Error(w, "invalid or expired session", http.StatusUnauthorized)
+		_ = h.store.RevokeRefreshToken(cookie.Value)
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    "",
+		Path:     "/auth",
+		HttpOnly: true,
+		Secure:   false,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ! Me
+func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
+	currentUser, ok := UserFromContext(r.Context())
+
+	if !ok {
+		http.Error(w, "user not authenticated", http.StatusUnauthorized)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 
-	json.NewEncoder(w).Encode(user)
+	json.NewEncoder(w).Encode(currentUser)
+}
+
+// ! Refresh Endpoint
+func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("refresh_token")
+
+	if err != nil {
+		http.Error(w, "refresh token missing", http.StatusUnauthorized)
+		return
+	}
+
+	oldToken := cookie.Value
+
+	refreshToken, err := h.store.GetRefreshToken(oldToken)
+
+	if err != nil {
+		http.Error(w, "invalid or expired refresh token", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := h.store.GetByID(refreshToken.UserID)
+
+	if err != nil {
+		http.Error(w, "user not found", http.StatusUnauthorized)
+		return
+	}
+
+	//* Revoke old refresh token
+	err = h.store.RevokeRefreshToken(oldToken)
+
+	if err != nil {
+		http.Error(w, "failed to revoke refresh token", http.StatusInternalServerError)
+		return
+	}
+
+	// * Create new refresh token
+	newRefreshToken, err := h.store.CreateRefreshToken(user.ID, 7*24*time.Hour)
+
+	if err != nil {
+		http.Error(w, "failed to create refresh token", http.StatusInternalServerError)
+		return
+	}
+
+	//* Create new access token
+	newAccessToken, err := h.jwtService.GenerateAccessToken(user)
+
+	if err != nil {
+		http.Error(w, "failed to create access token", http.StatusInternalServerError)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    newRefreshToken.Token,
+		Path:     "/auth",
+		HttpOnly: true,
+		Secure:   false,
+		SameSite: http.SameSiteLaxMode,
+		Expires:  newRefreshToken.ExpiresAt,
+	})
+
+	response := map[string]any{
+		"accessToken": newAccessToken,
+		"user":        user,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }

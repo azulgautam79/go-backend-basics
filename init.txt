@@ -1,4 +1,22 @@
 1. Initialize a go project
     go mod init github.com/azulgautam79/ecommerce-basic = go.mod
 
-2. 
+2.  | Node.js                | Go equivalent                 |
+    | ---------------------- | ----------------------------- |
+    | `node app.js`          | `go run app.go`               |
+    | `npm init`             | `go mod init myproject`       |
+    | `npm install`          | `go mod tidy`                 |
+    | `npm install axios`    | `go get <module>`             |
+    | `npm uninstall pkg`    | `go mod tidy` + remove import |
+    | `npm run build`        | `go build`                    |
+    | `npm test`             | `go test ./...`               |
+    | `npm run dev`          | `go run .`                    |
+    | `npx <command>`        | Usually `go run <module>`     |
+    | `node -v`              | `go version`                  |
+    | `npm -v`               | `go env GOVERSION`            |
+    | `package.json`         | `go.mod`                      |
+    | `package-lock.json`    | `go.sum`                      |
+    | `require()` / `import` | `import`                      |
+    | `console.log()`        | `fmt.Println()`               |
+    | `process.env.PORT`     | `os.Getenv("PORT")`           |
+    | `process.exit(1)`      | `os.Exit(1)`                  |

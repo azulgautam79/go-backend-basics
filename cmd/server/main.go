@@ -13,14 +13,33 @@ func main() {
 	handler := product.NewHandler(store)
 
 	userStore := user.NewStore()
-	userHandler := *user.NewHandler(userStore)
+	jwtService := user.NewJWTService(
+		"super-secret-development-key",
+	)
+	userHandler := user.NewHandler(userStore, jwtService)
+
+	authMiddleware := user.AuthMiddleware(jwtService, userStore)
 
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/auth/register", userHandler.Register)
 	mux.HandleFunc("/auth/login", userHandler.Login)
-	mux.HandleFunc("/auth/me", userHandler.Me)
-	mux.HandleFunc("/products", handler.Products)
+	mux.HandleFunc("/auth/refresh", userHandler.Refresh)
+	mux.HandleFunc("/auth/logout", userHandler.Logout)
+	mux.Handle("/auth/me", authMiddleware(http.HandlerFunc(userHandler.Me)))
+
+	// mux.HandleFunc("/products", handler.Products)
+	mux.Handle(
+		"/products",
+		authMiddleware(
+			user.RequireRole(
+				user.RoleSeller,
+				user.RoleAdmin,
+			)(
+				http.HandlerFunc(handler.Products),
+			),
+		),
+	)
 	mux.HandleFunc("/products/", handler.Product)
 
 	server := &http.Server{
@@ -28,7 +47,7 @@ func main() {
 		Handler: mux,
 	}
 
-	log.Println("Server listening on :8080")
+	log.Println("Server listening on http://localhost:8080")
 
 	err := server.ListenAndServe()
 

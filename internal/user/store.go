@@ -1,6 +1,9 @@
 package user
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 var (
 	ErrUserNotFound     = errors.New("user not found")
@@ -9,22 +12,22 @@ var (
 )
 
 type Store struct {
-	users    map[int64]User
-	byEmail  map[string]int64
-	sessions map[string]int64
-	nextID   int64
+	users         map[int64]User
+	byEmail       map[string]int64
+	refreshTokens map[string]RefreshToken
+	nextID        int64
 }
 
 func NewStore() *Store {
 	return &Store{
-		users:    make(map[int64]User),
-		byEmail:  make(map[string]int64),
-		sessions: make(map[string]int64),
-		nextID:   1,
+		users:         make(map[int64]User),
+		byEmail:       make(map[string]int64),
+		refreshTokens: make(map[string]RefreshToken),
+		nextID:        1,
 	}
 }
 
-//! Create User
+// ! Create User
 func (s *Store) Create(user User) (User, error) {
 
 	if _, exists := s.byEmail[user.Email]; exists {
@@ -40,7 +43,7 @@ func (s *Store) Create(user User) (User, error) {
 	return user, nil
 }
 
-//! Get User By Id
+// ! Get User By Id
 func (s *Store) GetByID(id int64) (User, error) {
 
 	user, exists := s.users[id]
@@ -52,7 +55,7 @@ func (s *Store) GetByID(id int64) (User, error) {
 	return user, nil
 }
 
-//! Get User By Email
+// ! Get User By Email
 func (s *Store) GetByEmail(email string) (User, error) {
 
 	id, exists := s.byEmail[email]
@@ -64,25 +67,56 @@ func (s *Store) GetByEmail(email string) (User, error) {
 	return s.GetByID(id)
 }
 
-// ! Create Session
-func (s *Store) CreateSession(userID int64) (string, error) {
-	token, err := GenerateToken()
+// ! Create Refresh Tokens
+func (s *Store) CreateRefreshToken(userID int64, duration time.Duration) (RefreshToken, error) {
+	token, err := GenerateRefreshToken()
 
 	if err != nil {
-		return "", err
+		return RefreshToken{}, err
 	}
 
-	s.sessions[token] = userID
-	return token, nil
+	refreshToken := RefreshToken{
+		Token:     token,
+		UserID:    userID,
+		ExpiresAt: time.Now().Add(duration),
+		Revoked:   false,
+	}
+
+	s.refreshTokens[token] = refreshToken
+
+	return refreshToken, nil
 }
 
-// ! Get User By Session
-func (s *Store) GetUserBySession(token string) (User, error) {
-	userID, exists := s.sessions[token]
+// ! Get Refresh Token
+func (s *Store) GetRefreshToken(token string) (RefreshToken, error) {
+	refreshToken, exists := s.refreshTokens[token]
 
 	if !exists {
-		return User{}, errors.New("invalid session")
+		return RefreshToken{}, errors.New("refresh token not found")
 	}
 
-	return s.GetByID(userID)
+	if refreshToken.Revoked {
+		return RefreshToken{}, errors.New("refresh token revoked")
+	}
+
+	if time.Now().After(refreshToken.ExpiresAt) {
+		return RefreshToken{}, errors.New("refresh token expired")
+	}
+
+	return refreshToken, nil
+}
+
+// ! Revoke Refresh Token
+func (s *Store) RevokeRefreshToken(token string) error {
+	refreshToken, exists := s.refreshTokens[token]
+
+	if !exists {
+		return errors.New("refresh token not found")
+	}
+
+	refreshToken.Revoked = true
+
+	s.refreshTokens[token] = refreshToken
+
+	return nil
 }
