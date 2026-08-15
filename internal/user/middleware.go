@@ -12,7 +12,7 @@ const userContextKey contextKey = "user"
 
 func AuthMiddleware(
 	jwtService *JWTService,
-	store *Store,
+	authService *AuthService,
 ) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
@@ -39,7 +39,7 @@ func AuthMiddleware(
 				return
 			}
 
-			currentUser, err := store.GetByID(claims.UserID)
+			currentUser, err := authService.GetUserByID(r.Context(), claims.UserID)
 
 			if err != nil {
 				http.Error(w, "user not found", http.StatusUnauthorized)
@@ -60,5 +60,3 @@ func UserFromContext(ctx context.Context) (User, bool) {
 
 	return user, ok
 }
-
-

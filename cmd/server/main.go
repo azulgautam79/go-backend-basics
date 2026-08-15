@@ -4,22 +4,52 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/azulgautam79/ecommerce-basic/internal/database"
 	"github.com/azulgautam79/ecommerce-basic/internal/product"
 	"github.com/azulgautam79/ecommerce-basic/internal/user"
 )
 
 func main() {
+
+	//! Database
+	db, dberr := database.NewPostgres(
+		database.Config{
+			Host:     "localhost",
+			Port:     "5432",
+			User:     "ecommerce",
+			Password: "ecommerce",
+			Name:     "ecommerce",
+		},
+	)
+
+	if dberr != nil {
+		log.Fatal(dberr)
+	}
+
+	defer db.Close()
+
+	//* Product Dependencies
 	store := product.NewStore()
 	handler := product.NewHandler(store)
 
-	userStore := user.NewStore()
+	//* User Dependencies
+	userRepo := user.NewPostgresUserRepository(db)
+	refreshTokenRepo := user.NewPostgresRefreshTokenRepository(db)
+
 	jwtService := user.NewJWTService(
 		"super-secret-development-key",
 	)
-	userHandler := user.NewHandler(userStore, jwtService)
+	authService := user.NewAuthService(
+		userRepo,
+		refreshTokenRepo,
+		jwtService,
+	)
 
-	authMiddleware := user.AuthMiddleware(jwtService, userStore)
+	userHandler := user.NewHandler(authService)
 
+	authMiddleware := user.AuthMiddleware(jwtService, authService)
+
+	//? Routes
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/auth/register", userHandler.Register)

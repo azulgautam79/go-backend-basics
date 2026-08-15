@@ -2,19 +2,27 @@ package user
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
-	"time"
 )
 
 type Handler struct {
-	store      *Store
-	jwtService *JWTService
+	authService *AuthService
 }
 
-func NewHandler(store *Store, jwtService *JWTService) *Handler {
+type RegisterInput struct {
+	Body RegisterRequest
+}
+
+type RegisterOutput struct {
+	Body User
+}
+
+func NewHandler(
+	authService *AuthService,
+) *Handler {
 	return &Handler{
-		store:      store,
-		jwtService: jwtService,
+		authService: authService,
 	}
 }
 
@@ -25,7 +33,8 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	err := json.NewDecoder(r.Body).Decode(&req)
 
 	if err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
 	}
 
 	if req.Name == "" || req.Email == "" || req.Password == "" {
@@ -33,29 +42,21 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hashedPassword, err := HashPassword(req.Password)
+	user, err := h.authService.Register(
+		r.Context(),
+		req.Name,
+		req.Email,
+		req.Password,
+	)
 
 	if err != nil {
-		http.Error(w, "failed to hash password", http.StatusInternalServerError)
-		return
-	}
-
-	user := User{
-		Name:     req.Name,
-		Email:    req.Email,
-		Password: hashedPassword,
-		Role:     RoleCustomer,
-	}
-
-	user, err = h.store.Create(user)
-
-	if err != nil {
-
-		if err == ErrEmailAlreadyUsed {
-			http.Error(w, "email already exists", http.StatusConflict)
+		if errors.Is(err, ErrEmailAlreadyUsed) {
+			http.Error(
+				w, "email already exists",
+				http.StatusConflict,
+			)
 			return
 		}
-
 		http.Error(w, "failed to create user", http.StatusInternalServerError)
 		return
 	}
@@ -73,49 +74,34 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	err := json.NewDecoder(r.Body).Decode(&req)
 
 	if err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
 
-	user, err := h.store.GetByEmail(req.Email)
+	result, err := h.authService.Login(
+		r.Context(),
+		req.Email,
+		req.Password,
+	)
 
 	if err != nil {
-		http.Error(w, "invalid email or password", http.StatusUnauthorized)
-		return
-	}
-
-	if !CheckPassword(req.Password, user.Password) {
-		http.Error(w, "invalid email or password", http.StatusUnauthorized)
-		return
-	}
-
-	accessToken, err := h.jwtService.GenerateAccessToken(user)
-
-	if err != nil {
-		http.Error(w, "failed to create access token", http.StatusInternalServerError)
-		return
-	}
-
-	refreshToken, err := h.store.CreateRefreshToken(user.ID, 7*24*time.Hour)
-
-	if err != nil {
-		http.Error(w, "failed to create refresh token", http.StatusInternalServerError)
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token",
-		Value:    refreshToken.Token,
+		Value:    result.RefreshToken,
 		Path:     "/auth",
 		HttpOnly: true,
 		Secure:   false,
 		SameSite: http.SameSiteLaxMode,
-		Expires:  refreshToken.ExpiresAt,
+		Expires:  result.ExpiresAt,
 	})
 
 	response := map[string]any{
-		"accessToken": accessToken,
-		"user":        user,
+		"accessToken": result.AccessToken,
+		"user":        result.User,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -127,8 +113,11 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("refresh_token")
 
-	if err != nil {
-		_ = h.store.RevokeRefreshToken(cookie.Value)
+	if err == nil {
+		_ = h.authService.Logout(
+			r.Context(),
+			cookie.Value,
+		)
 	}
 
 	http.SetCookie(w, &http.Cookie{
@@ -167,59 +156,33 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	oldToken := cookie.Value
-
-	refreshToken, err := h.store.GetRefreshToken(oldToken)
-
-	if err != nil {
-		http.Error(w, "invalid or expired refresh token", http.StatusUnauthorized)
-		return
-	}
-
-	user, err := h.store.GetByID(refreshToken.UserID)
+	result, err := h.authService.Refresh(
+		r.Context(),
+		cookie.Value,
+	)
 
 	if err != nil {
-		http.Error(w, "user not found", http.StatusUnauthorized)
-		return
-	}
-
-	//* Revoke old refresh token
-	err = h.store.RevokeRefreshToken(oldToken)
-
-	if err != nil {
-		http.Error(w, "failed to revoke refresh token", http.StatusInternalServerError)
-		return
-	}
-
-	// * Create new refresh token
-	newRefreshToken, err := h.store.CreateRefreshToken(user.ID, 7*24*time.Hour)
-
-	if err != nil {
-		http.Error(w, "failed to create refresh token", http.StatusInternalServerError)
-		return
-	}
-
-	//* Create new access token
-	newAccessToken, err := h.jwtService.GenerateAccessToken(user)
-
-	if err != nil {
-		http.Error(w, "failed to create access token", http.StatusInternalServerError)
+		http.Error(
+			w,
+			"invalid or expired refresh token",
+			http.StatusUnauthorized,
+		)
 		return
 	}
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token",
-		Value:    newRefreshToken.Token,
+		Value:    result.RefreshToken,
 		Path:     "/auth",
 		HttpOnly: true,
 		Secure:   false,
 		SameSite: http.SameSiteLaxMode,
-		Expires:  newRefreshToken.ExpiresAt,
+		Expires:  result.ExpiresAt,
 	})
 
 	response := map[string]any{
-		"accessToken": newAccessToken,
-		"user":        user,
+		"accessToken": result.AccessToken,
+		"user":        result.User,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

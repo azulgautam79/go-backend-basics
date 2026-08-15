@@ -1,28 +1,21 @@
 package user
 
-type Role string
-
-const (
-	RoleCustomer Role = "customer"
-	RoleSeller   Role = "seller"
-	RoleAdmin    Role = "admin"
-)
-
-type User struct {
-	ID       int64  `json:"id"`
-	Name     string `json:"name"`
-	Email    string `json:"email"`
-	Password string `json:"-"`
-	Role     Role   `json:"role"`
-}
+import "time"
 
 type RegisterRequest struct {
-	Name     string `json:"name"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Name     string `json:"name" minLength:"2"`
+	Email    string `json:"email" format:"email"`
+	Password string `json:"password" minLength:"8"`
 }
 
 type LoginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+}
+
+type LoginResponse struct {
+	User         User
+	AccessToken  string
+	RefreshToken string
+	ExpiresAt    time.Time
 }
