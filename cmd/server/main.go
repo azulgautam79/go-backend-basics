@@ -7,6 +7,8 @@ import (
 	"github.com/azulgautam79/ecommerce-basic/internal/database"
 	"github.com/azulgautam79/ecommerce-basic/internal/product"
 	"github.com/azulgautam79/ecommerce-basic/internal/user"
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humago"
 )
 
 func main() {
@@ -52,7 +54,25 @@ func main() {
 	//? Routes
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/auth/register", userHandler.Register)
+	config := huma.DefaultConfig(
+		"E-Commerce API",
+		"1.0.0",
+	)
+
+	config.DocsRenderer = huma.DocsRendererScalar
+
+	api := humago.New(mux, config)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "register-user",
+		Method:        http.MethodPost,
+		Path:          "/auth/register",
+		Summary:       "Register a new user",
+		Description:   "Create a new customer account.",
+		Tags:          []string{"Auth"},
+		DefaultStatus: http.StatusCreated,
+	}, userHandler.Register)
+
 	mux.HandleFunc("/auth/login", userHandler.Login)
 	mux.HandleFunc("/auth/refresh", userHandler.Refresh)
 	mux.HandleFunc("/auth/logout", userHandler.Logout)

@@ -1,9 +1,12 @@
 package user
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+
+	"github.com/danielgtaylor/huma/v2"
 )
 
 type Handler struct {
@@ -27,44 +30,33 @@ func NewHandler(
 }
 
 // ! Register Request
-func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
-	var req RegisterRequest
-
-	err := json.NewDecoder(r.Body).Decode(&req)
-
-	if err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
-		return
-	}
-
-	if req.Name == "" || req.Email == "" || req.Password == "" {
-		http.Error(w, "name, email or password are required", http.StatusBadRequest)
-		return
-	}
+func (h *Handler) Register(
+	ctx context.Context,
+	input *RegisterInput,
+) (*RegisterOutput, error) {
 
 	user, err := h.authService.Register(
-		r.Context(),
-		req.Name,
-		req.Email,
-		req.Password,
+		ctx,
+		input.Body.Name,
+		input.Body.Email,
+		input.Body.Password,
 	)
 
 	if err != nil {
 		if errors.Is(err, ErrEmailAlreadyUsed) {
-			http.Error(
-				w, "email already exists",
-				http.StatusConflict,
+			return nil, huma.Error409Conflict(
+				"email already exists",
 			)
-			return
 		}
-		http.Error(w, "failed to create user", http.StatusInternalServerError)
-		return
+
+		return nil, huma.Error500InternalServerError(
+			"failed to create user",
+		)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-
-	json.NewEncoder(w).Encode(user)
+	return &RegisterOutput{
+		Body: user,
+	}, nil
 }
 
 // ! Login
